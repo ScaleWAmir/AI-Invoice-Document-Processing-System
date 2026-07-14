@@ -1,0 +1,455 @@
+{
+  "name": "AI Invoice & Document Processing System",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyMinute" }] },
+        "filters": {
+          "readStatus": "unread",
+          "receivedAfter": ""
+        },
+        "options": {
+          "attachmentsPrefix": "attachment_",
+          "downloadAttachments": true
+        }
+      },
+      "id": "inv-001",
+      "name": "Email Trigger (New Invoice)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [-1200, 300],
+      "credentials": {
+        "gmailOAuth2": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice-upload",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "inv-002",
+      "name": "Manual Upload Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-1200, 500],
+      "webhookId": "invoice-upload-001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handle both Gmail trigger and manual upload\nconst input = $input.first().json;\nconst isEmail = input.from !== undefined;\n\nlet doc_source, sender_email, sender_name, subject, attachment_data, attachment_name, attachment_type;\n\nif (isEmail) {\n  doc_source = 'email';\n  sender_email = (input.from || '').match(/<([^>]+)>/) ? (input.from || '').match(/<([^>]+)>/)[1] : (input.from || '');\n  sender_name = (input.from || '').replace(/<[^>]+>/, '').trim();\n  subject = input.subject || '';\n  // Get first attachment if available\n  const attachmentKey = Object.keys(input).find(k => k.startsWith('attachment_'));\n  attachment_data = attachmentKey ? input[attachmentKey] : null;\n  attachment_name = input.attachments?.[0]?.filename || 'invoice.pdf';\n  attachment_type = input.attachments?.[0]?.mimeType || 'application/pdf';\n} else {\n  const body = input.body ?? input;\n  doc_source = 'manual';\n  sender_email = body.sender_email || 'unknown@company.com';\n  sender_name = body.sender_name || 'Manual Upload';\n  subject = body.subject || 'Manual Invoice Upload';\n  attachment_data = body.file_data || null;\n  attachment_name = body.file_name || 'document.pdf';\n  attachment_type = body.file_type || 'application/pdf';\n}\n\nconst doc_id = 'DOC-' + Date.now();\nconst received_at = new Date().toISOString();\n\nreturn [{\n  json: {\n    doc_id,\n    doc_source,\n    sender_email,\n    sender_name,\n    subject,\n    attachment_name,\n    attachment_type,\n    attachment_data,\n    received_at,\n    status: 'received'\n  }\n}];"
+      },
+      "id": "inv-003",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-940, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "inv-c001",
+              "leftValue": "={{ $json.attachment_type }}",
+              "rightValue": "application/pdf",
+              "operator": { "type": "string", "operation": "contains" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "inv-004",
+      "name": "Has PDF Attachment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-700, 400]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Invoice_Log", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Doc_ID": "={{ $json.doc_id }}",
+            "Received_At": "={{ $json.received_at }}",
+            "Sender_Email": "={{ $json.sender_email }}",
+            "Sender_Name": "={{ $json.sender_name }}",
+            "File_Name": "={{ $json.attachment_name }}",
+            "Status": "Rejected - No PDF Attachment",
+            "Error_Note": "Email received but no PDF attachment found"
+          },
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "inv-005",
+      "name": "Log: No Attachment",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-700, 580],
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer REPLACE_WITH_OPENAI_API_KEY" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "body": {
+          "model": "gpt-4o",
+          "max_tokens": 2000,
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are an expert document analyst specializing in extracting structured data from invoices, receipts, purchase orders, and financial documents. You analyze document images and extract all relevant information with high accuracy. Always respond with a valid JSON object only — no markdown, no explanation, just the JSON."
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Analyze this financial document and extract ALL information. Return ONLY a valid JSON object with this exact structure:\n{\n  \"document_type\": \"invoice|receipt|purchase_order|credit_note|other\",\n  \"invoice_number\": \"string or null\",\n  \"invoice_date\": \"YYYY-MM-DD or null\",\n  \"due_date\": \"YYYY-MM-DD or null\",\n  \"vendor\": {\n    \"name\": \"string or null\",\n    \"address\": \"string or null\",\n    \"email\": \"string or null\",\n    \"phone\": \"string or null\",\n    \"tax_id\": \"string or null\"\n  },\n  \"bill_to\": {\n    \"name\": \"string or null\",\n    \"address\": \"string or null\"\n  },\n  \"line_items\": [{\"description\": \"string\", \"quantity\": number_or_null, \"unit_price\": number_or_null, \"total\": number_or_null}],\n  \"subtotal\": number_or_null,\n  \"tax_amount\": number_or_null,\n  \"tax_rate\": \"string or null\",\n  \"discount\": number_or_null,\n  \"total_amount\": number_or_null,\n  \"currency\": \"USD|EUR|GBP|etc or null\",\n  \"payment_terms\": \"string or null\",\n  \"payment_method\": \"string or null\",\n  \"bank_details\": \"string or null\",\n  \"po_reference\": \"string or null\",\n  \"notes\": \"string or null\",\n  \"confidence_score\": 0-100\n}"
+                },
+                {
+                  "type": "image_url",
+                  "image_url": {
+                    "url": "={{ 'data:' + $json.attachment_type + ';base64,' + $json.attachment_data }}",
+                    "detail": "high"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "inv-006",
+      "name": "GPT-4o Vision: Extract Document Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [-460, 300],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Normalize Input').item.json;\nconst apiResponse = $input.first().json;\n\nlet extracted;\ntry {\n  const content = apiResponse.choices?.[0]?.message?.content || '{}';\n  extracted = JSON.parse(content.replace(/```json|```/g, '').trim());\n} catch(e) {\n  return [{\n    json: {\n      ...input,\n      parse_error: true,\n      error_note: 'Failed to parse GPT-4o response: ' + e.message,\n      extracted: null,\n      status: 'extraction_failed'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...input,\n    ...extracted,\n    parse_error: false,\n    status: 'extracted'\n  }\n}];"
+      },
+      "id": "inv-007",
+      "name": "Parse Extraction Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst errors = [];\nconst warnings = [];\n\n// Critical field checks\nif (!d.invoice_number) errors.push('Missing invoice number');\nif (!d.invoice_date) errors.push('Missing invoice date');\nif (!d.total_amount) errors.push('Missing total amount');\nif (!d.vendor?.name) errors.push('Missing vendor name');\nif (!d.currency) warnings.push('Currency not detected — defaulting to USD');\n\n// Business rule: max auto-approve amount\nconst AUTO_APPROVE_LIMIT = 5000;\nconst REVIEW_LIMIT = 50000;\nconst total = parseFloat(d.total_amount) || 0;\n\nlet approval_tier;\nif (errors.length > 0) {\n  approval_tier = 'rejected';\n} else if (total <= AUTO_APPROVE_LIMIT && d.confidence_score >= 85) {\n  approval_tier = 'auto_approved';\n} else if (total <= REVIEW_LIMIT) {\n  approval_tier = 'manager_review';\n} else {\n  approval_tier = 'executive_review';\n}\n\n// Duplicate check placeholder\nconst potential_duplicate = false; // In production: query Sheets for same invoice_number + vendor\n\n// Date validation\nlet is_overdue = false;\nif (d.due_date) {\n  is_overdue = new Date(d.due_date) < new Date();\n  if (is_overdue) warnings.push('Invoice due date has passed');\n}\n\n// Tax validation\nif (d.subtotal && d.tax_amount && d.total_amount) {\n  const expected = parseFloat(d.subtotal) + parseFloat(d.tax_amount);\n  const actual = parseFloat(d.total_amount);\n  if (Math.abs(expected - actual) > 0.1) {\n    warnings.push('Math discrepancy: subtotal + tax ≠ total');\n  }\n}\n\nreturn [{\n  json: {\n    ...d,\n    validation_errors: errors,\n    validation_warnings: warnings,\n    approval_tier,\n    is_overdue,\n    potential_duplicate,\n    total_numeric: total,\n    currency: d.currency || 'USD',\n    status: errors.length > 0 ? 'validation_failed' : 'validated'\n  }\n}];"
+      },
+      "id": "inv-008",
+      "name": "Validation Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "id": "inv-r001", "leftValue": "={{ $json.approval_tier }}", "rightValue": "auto_approved", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Auto Approve"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "id": "inv-r002", "leftValue": "={{ $json.approval_tier }}", "rightValue": "manager_review", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Manager Review"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+                "conditions": [{ "id": "inv-r003", "leftValue": "={{ $json.approval_tier }}", "rightValue": "executive_review", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Executive Review"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": { "fallbackOutputKey": "Rejected" }
+      },
+      "id": "inv-009",
+      "name": "Approval Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nreturn [{\n  json: {\n    ...d,\n    final_status: 'Auto-Approved',\n    approval_note: `Invoice ${d.invoice_number} for ${d.currency} ${d.total_numeric} auto-approved. Confidence: ${d.confidence_score}/100`,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "inv-010",
+      "name": "Process: Auto Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nreturn [{\n  json: {\n    ...d,\n    final_status: 'Pending Manager Review',\n    approval_note: `Invoice ${d.invoice_number} for ${d.currency} ${d.total_numeric} requires manager review.`,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "inv-011",
+      "name": "Process: Manager Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nreturn [{\n  json: {\n    ...d,\n    final_status: 'Pending Executive Review',\n    approval_note: `High-value invoice ${d.invoice_number} for ${d.currency} ${d.total_numeric} requires executive approval.`,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "inv-012",
+      "name": "Process: Executive Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $json;\nreturn [{\n  json: {\n    ...d,\n    final_status: 'Rejected',\n    approval_note: `Invoice rejected. Errors: ${(d.validation_errors || []).join(', ')}`,\n    processed_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "inv-013",
+      "name": "Process: Rejected",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [520, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\n\n// Build clean summary for email and sheet\nconst lineItemsSummary = (d.line_items || []).map((item, i) =>\n  `${i+1}. ${item.description || 'Item'} | Qty: ${item.quantity || 'N/A'} | Unit: ${d.currency} ${item.unit_price || 'N/A'} | Total: ${d.currency} ${item.total || 'N/A'}`\n).join('\\n');\n\nconst warningText = d.validation_warnings?.length > 0\n  ? '⚠️ Warnings: ' + d.validation_warnings.join(' | ')\n  : '';\n\nconst errorText = d.validation_errors?.length > 0\n  ? '❌ Errors: ' + d.validation_errors.join(' | ')\n  : '';\n\nconst emailBody = `\nInvoice Processing Summary\n${'='.repeat(50)}\n\nDoc ID: ${d.doc_id}\nStatus: ${d.final_status}\nReceived: ${d.received_at}\n\nDOCUMENT DETAILS\n${'─'.repeat(40)}\nDocument Type: ${d.document_type || 'Invoice'}\nInvoice Number: ${d.invoice_number || 'N/A'}\nInvoice Date: ${d.invoice_date || 'N/A'}\nDue Date: ${d.due_date || 'N/A'}${d.is_overdue ? ' ⚠️ OVERDUE' : ''}\n\nVENDOR\n${'─'.repeat(40)}\nName: ${d.vendor?.name || 'N/A'}\nEmail: ${d.vendor?.email || d.sender_email}\nTax ID: ${d.vendor?.tax_id || 'N/A'}\n\nFINANCIAL SUMMARY\n${'─'.repeat(40)}\nSubtotal: ${d.currency} ${d.subtotal || 'N/A'}\nTax (${d.tax_rate || ''}): ${d.currency} ${d.tax_amount || 'N/A'}\nTotal: ${d.currency} ${d.total_numeric}\nPayment Terms: ${d.payment_terms || 'N/A'}\n\nLINE ITEMS\n${'─'.repeat(40)}\n${lineItemsSummary || 'No line items extracted'}\n\nVALIDATION\n${'─'.repeat(40)}\nConfidence Score: ${d.confidence_score}/100\n${errorText}\n${warningText}\n\nAPPROVAL\n${'─'.repeat(40)}\n${d.approval_note}\n`;\n\nreturn [{\n  json: {\n    ...d,\n    email_body: emailBody,\n    line_items_summary: lineItemsSummary\n  }\n}];"
+      },
+      "id": "inv-014",
+      "name": "Build Notification Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_FINANCE_TEAM_EMAIL",
+        "subject": "={{ '[' + $json.final_status + '] Invoice ' + ($json.invoice_number || $json.doc_id) + ' — ' + $json.currency + ' ' + $json.total_numeric + ' from ' + ($json.vendor?.name || $json.sender_name) }}",
+        "message": "={{ $json.email_body }}",
+        "options": {}
+      },
+      "id": "inv-015",
+      "name": "Send Finance Team Notification",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1040, 180],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "gmailOAuth2": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "inv-c002",
+              "leftValue": "={{ $json.final_status }}",
+              "rightValue": "Auto-Approved",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "inv-016",
+      "name": "Needs Human Review?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1040, 380]
+    },
+    {
+      "parameters": {
+        "sendTo": "REPLACE_WITH_VENDOR_EMAIL_OR_USE_$json.vendor.email",
+        "subject": "={{ 'Re: Invoice ' + ($json.invoice_number || $json.doc_id) + ' — Received & Processing' }}",
+        "message": "={{ 'Dear ' + ($json.vendor?.name || $json.sender_name) + ',\\n\\nThank you for submitting invoice ' + ($json.invoice_number || 'N/A') + ' for ' + $json.currency + ' ' + $json.total_numeric + '.\\n\\nWe have received your document and our team is reviewing it. You can expect a response within 2-3 business days.\\n\\nReference ID: ' + $json.doc_id + '\\n\\nBest regards,\\nFinance Team' }}",
+        "options": {}
+      },
+      "id": "inv-017",
+      "name": "Send Vendor Acknowledgement",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1040, 560],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "gmailOAuth2": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Gmail account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Invoice_Log", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Doc_ID": "={{ $json.doc_id }}",
+            "Received_At": "={{ $json.received_at }}",
+            "Processed_At": "={{ $json.processed_at }}",
+            "Source": "={{ $json.doc_source }}",
+            "Sender_Email": "={{ $json.sender_email }}",
+            "Sender_Name": "={{ $json.sender_name }}",
+            "Vendor_Name": "={{ $json.vendor?.name || '' }}",
+            "Invoice_Number": "={{ $json.invoice_number || '' }}",
+            "Invoice_Date": "={{ $json.invoice_date || '' }}",
+            "Due_Date": "={{ $json.due_date || '' }}",
+            "Total_Amount": "={{ $json.total_numeric }}",
+            "Currency": "={{ $json.currency }}",
+            "Document_Type": "={{ $json.document_type || '' }}",
+            "Confidence_Score": "={{ $json.confidence_score }}",
+            "Approval_Tier": "={{ $json.approval_tier }}",
+            "Status": "={{ $json.final_status }}",
+            "Is_Overdue": "={{ $json.is_overdue }}",
+            "Errors": "={{ ($json.validation_errors || []).join(', ') }}",
+            "Warnings": "={{ ($json.validation_warnings || []).join(', ') }}",
+            "PO_Reference": "={{ $json.po_reference || '' }}",
+            "Payment_Terms": "={{ $json.payment_terms || '' }}",
+            "File_Name": "={{ $json.attachment_name }}"
+          },
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "inv-018",
+      "name": "Log to Invoice_Log Sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1300, 300],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "REPLACE_WITH_YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Pending_Review", "mode": "name" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Doc_ID": "={{ $json.doc_id }}",
+            "Invoice_Number": "={{ $json.invoice_number || '' }}",
+            "Vendor": "={{ $json.vendor?.name || '' }}",
+            "Total": "={{ $json.currency + ' ' + $json.total_numeric }}",
+            "Due_Date": "={{ $json.due_date || '' }}",
+            "Review_Type": "={{ $json.approval_tier }}",
+            "Received_At": "={{ $json.received_at }}",
+            "Reviewer_Action": "PENDING",
+            "Notes": ""
+          },
+          "matchingColumns": []
+        },
+        "options": {}
+      },
+      "id": "inv-019",
+      "name": "Add to Pending Review Queue",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1300, 480],
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "googleSheetsOAuth2Api": { "id": "REPLACE_WITH_YOUR_CREDENTIAL_ID", "name": "Google Sheets account" }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { status: $json.final_status, doc_id: $json.doc_id, invoice_number: $json.invoice_number, vendor: $json.vendor?.name, total: $json.currency + ' ' + $json.total_numeric, confidence: $json.confidence_score, message: 'Document processed successfully.' } }}",
+        "options": {}
+      },
+      "id": "inv-020",
+      "name": "Respond to Manual Upload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1540, 300]
+    }
+  ],
+  "connections": {
+    "Email Trigger (New Invoice)": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Manual Upload Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Has PDF Attachment?", "type": "main", "index": 0 }]] },
+    "Has PDF Attachment?": {
+      "main": [
+        [{ "node": "GPT-4o Vision: Extract Document Data", "type": "main", "index": 0 }],
+        [{ "node": "Log: No Attachment", "type": "main", "index": 0 }]
+      ]
+    },
+    "GPT-4o Vision: Extract Document Data": {
+      "main": [
+        [{ "node": "Parse Extraction Result", "type": "main", "index": 0 }],
+        [{ "node": "Parse Extraction Result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Extraction Result": { "main": [[{ "node": "Validation Engine", "type": "main", "index": 0 }]] },
+    "Validation Engine": { "main": [[{ "node": "Approval Router", "type": "main", "index": 0 }]] },
+    "Approval Router": {
+      "main": [
+        [{ "node": "Process: Auto Approve", "type": "main", "index": 0 }],
+        [{ "node": "Process: Manager Review", "type": "main", "index": 0 }],
+        [{ "node": "Process: Executive Review", "type": "main", "index": 0 }],
+        [{ "node": "Process: Rejected", "type": "main", "index": 0 }]
+      ]
+    },
+    "Process: Auto Approve": { "main": [[{ "node": "Build Notification Content", "type": "main", "index": 0 }]] },
+    "Process: Manager Review": { "main": [[{ "node": "Build Notification Content", "type": "main", "index": 0 }]] },
+    "Process: Executive Review": { "main": [[{ "node": "Build Notification Content", "type": "main", "index": 0 }]] },
+    "Process: Rejected": { "main": [[{ "node": "Build Notification Content", "type": "main", "index": 0 }]] },
+    "Build Notification Content": {
+      "main": [[
+        { "node": "Send Finance Team Notification", "type": "main", "index": 0 },
+        { "node": "Needs Human Review?", "type": "main", "index": 0 },
+        { "node": "Log to Invoice_Log Sheet", "type": "main", "index": 0 }
+      ]]
+    },
+    "Send Finance Team Notification": { "main": [[{ "node": "Respond to Manual Upload", "type": "main", "index": 0 }]] },
+    "Needs Human Review?": {
+      "main": [
+        [{ "node": "Add to Pending Review Queue", "type": "main", "index": 0 }],
+        [{ "node": "Send Vendor Acknowledgement", "type": "main", "index": 0 }]
+      ]
+    },
+    "Log to Invoice_Log Sheet": { "main": [[{ "node": "Respond to Manual Upload", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "instanceId": "ai-invoice-processor-portfolio" },
+  "pinData": {}
+}

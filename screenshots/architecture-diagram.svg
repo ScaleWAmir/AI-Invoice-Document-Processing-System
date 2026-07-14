@@ -1,0 +1,92 @@
+<svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6B7280"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="800" fill="#0B0D12"/>
+
+  <text x="40" y="50" fill="#F5F5F7" font-size="24" font-weight="700">AI Invoice Processing — Architecture</text>
+  <text x="40" y="76" fill="#9CA3AF" font-size="13">Two entry points, one extraction + validation pipeline, tiered approval routing</text>
+
+  <!-- Entry points -->
+  <rect x="40" y="120" width="200" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="140" y="155" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="600">Gmail Trigger</text>
+
+  <rect x="40" y="200" width="200" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="140" y="235" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="600">Manual Upload Webhook</text>
+
+  <!-- Normalize -->
+  <rect x="300" y="160" width="180" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="390" y="195" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="600">Normalize Input</text>
+  <path d="M240,150 L300,180" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <path d="M240,230 L300,200" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Has PDF? -->
+  <rect x="540" y="160" width="180" height="60" rx="10" fill="#1B2030" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="630" y="188" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="700">Has PDF Attachment?</text>
+  <path d="M480,190 L540,190" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- No attachment branch -->
+  <rect x="540" y="280" width="180" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="630" y="308" fill="#F5F5F7" font-size="11" text-anchor="middle">Log: No Attachment</text>
+  <text x="630" y="325" fill="#9CA3AF" font-size="10" text-anchor="middle">(rejected)</text>
+  <path d="M630,220 L630,280" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Vision extraction -->
+  <rect x="800" y="140" width="220" height="100" rx="12" fill="#1B2030" stroke="#34D399" stroke-width="1.5"/>
+  <text x="910" y="170" fill="#F5F5F7" font-size="13" text-anchor="middle" font-weight="700">GPT-4o Vision</text>
+  <text x="910" y="190" fill="#9CA3AF" font-size="11" text-anchor="middle">Extract structured invoice data</text>
+  <text x="910" y="208" fill="#9CA3AF" font-size="11" text-anchor="middle">vendor · amounts · line items</text>
+  <text x="910" y="226" fill="#9CA3AF" font-size="11" text-anchor="middle">+ self-reported confidence</text>
+  <path d="M720,190 L800,190" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Parse -->
+  <rect x="800" y="280" width="220" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="910" y="315" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="600">Parse Extraction Result</text>
+  <path d="M910,240 L910,280" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Validation -->
+  <rect x="800" y="380" width="220" height="90" rx="12" fill="#1B2030" stroke="#4C56E0" stroke-width="1.5"/>
+  <text x="910" y="408" fill="#F5F5F7" font-size="13" text-anchor="middle" font-weight="700">Validation Engine</text>
+  <text x="910" y="428" fill="#9CA3AF" font-size="10" text-anchor="middle">required fields · math check</text>
+  <text x="910" y="444" fill="#9CA3AF" font-size="10" text-anchor="middle">overdue flag · approval tier</text>
+  <text x="910" y="460" fill="#9CA3AF" font-size="10" text-anchor="middle">rules: auto ≤ $5K, exec &gt; $50K</text>
+  <path d="M910,340 L910,380" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Approval router -->
+  <rect x="800" y="510" width="220" height="60" rx="10" fill="#1B2030" stroke="#F59E0B" stroke-width="1.5"/>
+  <text x="910" y="545" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="700">Approval Router</text>
+  <path d="M910,470 L910,510" fill="none" stroke="#6B7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- 4 outcomes -->
+  <rect x="40" y="610" width="160" height="55" rx="8" fill="#151823" stroke="#34D399"/>
+  <text x="120" y="642" fill="#F5F5F7" font-size="11" text-anchor="middle" font-weight="600">Auto-Approved</text>
+
+  <rect x="230" y="610" width="160" height="55" rx="8" fill="#151823" stroke="#2A2F3E"/>
+  <text x="310" y="642" fill="#F5F5F7" font-size="11" text-anchor="middle" font-weight="600">Manager Review</text>
+
+  <rect x="420" y="610" width="160" height="55" rx="8" fill="#151823" stroke="#2A2F3E"/>
+  <text x="500" y="642" fill="#F5F5F7" font-size="11" text-anchor="middle" font-weight="600">Executive Review</text>
+
+  <rect x="610" y="610" width="160" height="55" rx="8" fill="#151823" stroke="#EF4444"/>
+  <text x="690" y="642" fill="#F5F5F7" font-size="11" text-anchor="middle" font-weight="600">Rejected</text>
+
+  <path d="M850,570 L120,610" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M880,570 L310,610" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M910,570 L500,610" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M940,570 L690,610" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- Convergence -->
+  <rect x="230" y="700" width="540" height="60" rx="10" fill="#151823" stroke="#2A2F3E"/>
+  <text x="500" y="726" fill="#F5F5F7" font-size="12" text-anchor="middle" font-weight="600">Build Notification → Email Finance Team + Log to Sheet</text>
+  <text x="500" y="744" fill="#9CA3AF" font-size="10" text-anchor="middle">non-approved also → Pending Review Queue + Vendor Acknowledgement</text>
+
+  <path d="M120,665 L400,700" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M310,665 L450,700" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M500,665 L500,700" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+  <path d="M690,665 L580,700" fill="none" stroke="#6B7280" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <text x="40" y="785" fill="#6B7280" font-size="11">Green = AI extraction · Blue = business logic · Amber = decision gate · Red = terminal reject path</text>
+</svg>
